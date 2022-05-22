@@ -1,3 +1,7 @@
+-- To run this code,
+--   1) copy it to the elm-lang.org/try text area; or
+--   2) copy it to an initialized elm folder's src folder, and
+--      uncomment the "module Main exposing(..)" line.
 -- Start ./src/Main.elm
 -- module Main exposing(..)
 
