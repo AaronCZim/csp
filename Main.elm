@@ -288,6 +288,7 @@ type alias CspModel =
 
 type alias Csp =
   { template : List Int
+  , options : List (List Int)
   , constraints : List Constraints
   }
 
@@ -295,25 +296,34 @@ type alias Csp =
 type Constraints
   = Fix Int Int
   | Eq Int Int Int
-  | AllDiff (Set.Set Int) Int
+  | AllDiff Int (Set.Set Int)
 
 
 eq i j = Eq i j 0
 
 
 cspInit =
+  let
+    constraints =
+      [ Fix 0 0
+      , Eq 1 2 -1
+      , AllDiff 0 (Set.fromList [0, 1, 2])
+      ]
+  in
   Csp
     [2, 2, 2]
-    [ AllDiff (Set.fromList [0, 1, 2]) 0
-    , Fix 0 0
-    , Eq 1 2 -1
-    ]
+    ( templateToOptions [2, 2, 2]
+      |> prune constraints
+      |> prune constraints
+      |> prune constraints
+    )
+    constraints
     |> CspModel [] 7 
 
 
 cspInitCmd =
   cmdReroll
-    cspInit.problem.template
+    cspInit.problem.options
     []
 
 
@@ -324,16 +334,16 @@ type CspMsg
   = Reroll (List Int) Int
 
 
-cmdReroll template partialGuess =
-  template
+cmdReroll options partialGuess =
+  options
     |> List.drop
-      ( List.length template
+      ( List.length options
        - List.length partialGuess
        - 1
       )
     |> List.head
-    |> Maybe.withDefault 0
-    |> Random.int 0
+    |> Maybe.withDefault []
+    |> Random.uniform 0
     |> Random.generate
       (Reroll partialGuess)
 
@@ -352,7 +362,7 @@ cspUpdate msg model =
       then
         ( model
         , cmdReroll
-          model.problem.template
+          model.problem.options
           nextPartialGuess
         )
       else
@@ -373,7 +383,7 @@ cspUpdate msg model =
             Cmd.none
           else
             cmdReroll
-              model.problem.template
+              model.problem.options
               []
         )
 
@@ -396,10 +406,14 @@ insertScore model guess guesses =
 
 
 cspView left top w h model =
-  ( ( ( model.problem.template
+  ( ( ( model.problem.options
+        |> Debug.toString
+      )
+      {-- ( model.problem.template
         |> List.map String.fromInt
         |> String.join ","
       )
+      --}
         :: List.map
           toStringConstraints
             model.problem.constraints
@@ -450,7 +464,7 @@ cspSubscriptions model =
 
 toStringConstraints constraint =
   case constraint of
-    AllDiff indexSet exceptions ->
+    AllDiff exceptions indexSet ->
       "AllDiff {"
         ++ ( indexSet
             |> Set.toList
@@ -533,7 +547,7 @@ isConstrained guess constraint =
         |> Maybe.withDefault 0
   in
   case constraint of
-    AllDiff diffSet exceptions ->
+    AllDiff exceptions diffSet ->
       diffSet
         |> Set.toList
         |> List.map get
@@ -546,6 +560,119 @@ isConstrained guess constraint =
     
     Eq i j offset ->
       get i == (get j + offset)
+
+
+templateToOptions template =
+  template
+    |> List.map
+      (List.range 0)
+
+
+prune constraints options =
+  let
+    optionsNext =
+      constraints
+        |> List.foldl
+          pruneConstraint
+          options
+  in
+  if optionsNext == options then
+    options
+  else
+    optionsNext
+    --prune constraints optionsNext
+
+
+pruneConstraint constraint options =
+  case constraint of
+    Fix i value ->
+      ( List.take i options )
+        ++ ( [ value ]
+            :: List.drop
+              (i + 1)
+               options
+          )
+    
+    Eq i j offset ->
+      let
+        optionsAtI =
+          options
+            |> List.drop i
+            |> List.head
+            |> Maybe.withDefault []
+        optionsAtJ =
+          options
+            |> List.drop j
+            |> List.head
+            |> Maybe.withDefault []
+        acceptableIValues =
+          optionsAtJ
+            |> List.map
+              ((+) offset)
+            |> Set.fromList
+        acceptableJValues =
+          optionsAtI
+            |> List.map
+              (\o -> o - offset)
+            |> Set.fromList
+        setMember set member =
+          Set.member member set
+      in
+      options
+        |> List.indexedMap
+          (\k optionsAtK ->
+            if k == i then
+              optionsAtK
+                |> List.filter
+                  (setMember acceptableIValues)
+            else if k == j then
+              optionsAtK
+                |> List.filter
+                  (setMember acceptableJValues)
+            else
+              optionsAtK
+          )
+    
+    AllDiff exceptions diffSet ->
+      if exceptions /= 0 then
+        options
+      else
+        let
+          singletons =
+            options
+              |> List.indexedMap Tuple.pair
+              |> List.filterMap
+                (\(i, optionsAtI) ->
+                  if
+                    (Set.member i diffSet)
+                      && ( List.drop 1
+                          optionsAtI
+                          == []
+                        )
+                  then
+                    List.head optionsAtI
+                  else
+                    Nothing
+                )
+        in
+        singletons
+          |> List.foldl
+            (\singleton op ->
+              op
+                |> List.map
+                  (\optionsAtI ->
+                    if
+                      List.drop 1 optionsAtI
+                        == []
+                    then
+                      optionsAtI
+                    else
+                      optionsAtI
+                        |> List.filter
+                          ((/=) singleton)
+                  )
+            )
+            options
 
 
 -- End of ./src/Csp.elm
