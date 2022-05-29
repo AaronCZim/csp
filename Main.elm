@@ -579,8 +579,7 @@ prune constraints options =
   if optionsNext == options then
     options
   else
-    optionsNext
-    --prune constraints optionsNext
+    prune constraints optionsNext
 
 
 pruneConstraint constraint options =
