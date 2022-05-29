@@ -335,17 +335,25 @@ type CspMsg
 
 
 cmdReroll options partialGuess =
-  options
-    |> List.drop
-      ( List.length options
-       - List.length partialGuess
-       - 1
-      )
-    |> List.head
-    |> Maybe.withDefault []
-    |> Random.uniform 0
-    |> Random.generate
-      (Reroll partialGuess)
+  let
+    optionsAtI =
+      options
+        |> List.drop
+          ( List.length options
+           - List.length partialGuess
+           - 1
+          )
+        |> List.head
+        |> Maybe.withDefault []
+  in
+  case List.head optionsAtI of
+    Nothing ->
+      Cmd.none
+    Just first
+      Random.uniform first
+        (List.drop 1 optionsAtI)
+        |> Random.generate
+          (Reroll partialGuess)
 
 
 cspUpdate msg model =
