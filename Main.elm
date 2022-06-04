@@ -349,7 +349,8 @@ cmdReroll options partialGuess =
   case List.head optionsAtI of
     Nothing ->
       Cmd.none
-    Just first
+
+    Just first ->
       Random.uniform first
         (List.drop 1 optionsAtI)
         |> Random.generate
