@@ -289,11 +289,11 @@ type alias CspModel =
 type alias Csp =
   { template : List Int
   , options : List (List Int)
-  , constraints : List Constraints
+  , constraints : List Constraint
   }
 
 
-type Constraints
+type Constraint
   = Fix Int Int
   | Eq Int Int Int
   | AllDiff Int (Set.Set Int)
