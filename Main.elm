@@ -667,17 +667,26 @@ pruneConstraint constraint options =
           |> List.foldl
             (\singleton op ->
               op
-                |> List.map
-                  (\optionsAtI ->
+                |> List.indexedMap
+                  (\i optionsAtI ->
                     if
-                      List.drop 1 optionsAtI
-                        == []
+                      Set.member i diffSet
+                        && ( List.drop 1 optionsAtI
+                            /= []
+                            )
                     then
-                      optionsAtI
+                      let
+                        filteredOptions =
+                          optionsAtI
+                            |> List.filter
+                              ((/=) singleton)
+                      in
+                      if filteredOptions == [] then
+                        optionsAtI
+                      else
+                        filteredOptions
                     else
                       optionsAtI
-                        |> List.filter
-                          ((/=) singleton)
                   )
             )
             options
