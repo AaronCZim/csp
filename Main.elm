@@ -340,7 +340,7 @@ setCsp template constraints solver =
     | problem =
       Csp
         template
-        ( templateToOptions [2, 2, 2] )
+        ( templateToOptions template )
         constraints
   }
 
