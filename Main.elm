@@ -265,7 +265,13 @@ debuggerSubscriptions model =
 
 
 delayFor msg =
-  300
+  case msg of
+    Reroll options partial ->
+      1000 / 3
+      
+    MsgPruneStep _ ->
+      1000
+
 
 
 -- End of ./src/Debugger.elm
@@ -280,17 +286,34 @@ delayFor msg =
 
 
 type alias CspModel =
-  { guesses : List (List Int)
+  { guesses : List Answer
   , guessesLen : Int
   , problem : Csp
   }
 
 
+cspModelEmpty =
+  CspModel
+    []
+    7
+    cspEmpty
+
+
 type alias Csp =
-  { template : List Int
-  , options : List (List Int)
+  { template : Answer
+  , options : Options
   , constraints : List Constraint
   }
+
+
+type alias Answer = List Int
+
+
+type alias Options = List (List Int)
+
+
+cspEmpty =
+  Csp [] [] []
 
 
 type Constraint
@@ -303,35 +326,71 @@ eq i j = Eq i j 0
 
 
 cspInit =
-  let
-    constraints =
-      [ Fix 0 0
-      , Eq 1 2 -1
-      , AllDiff 0 (Set.fromList [0, 1, 2])
-      ]
-  in
-  Csp
+  setCsp
     [2, 2, 2]
-    ( templateToOptions [2, 2, 2]
-      |> prune constraints
-      |> prune constraints
-      |> prune constraints
-    )
-    constraints
-    |> CspModel [] 7 
+    [ Fix 0 0
+    , Eq 1 2 -1
+    , AllDiff 0 (Set.fromList [0, 1, 2])
+    ]
+    cspModelEmpty
+
+
+setCsp template constraints solver =
+  { solver
+    | problem =
+      Csp
+        template
+        ( templateToOptions [2, 2, 2] )
+        constraints
+  }
 
 
 cspInitCmd =
-  cmdReroll
-    cspInit.problem.options
-    []
+  cmdPrune
+    cspInit.problem.template
+    cspInit.problem.constraints
 
 
 -- Csp Update
 
 
 type CspMsg
-  = Reroll (List Int) Int
+  = Reroll Answer Int
+  | MsgPruneStep PruneStep
+
+
+cmdPrune template constraints =
+  let
+    options =
+      templateToOptions
+        template
+  in
+  case List.head constraints of
+    Nothing ->
+      Cmd.none
+
+    Just firstConstraint ->
+      ConstraintStep
+        options
+        []
+        firstConstraint
+        ( List.drop 1 constraints )
+        options
+        |> PruneStep
+        |> MsgPruneStep
+        |> Task.succeed
+        |> Task.perform identity
+
+
+cmdPruneFrom pruneStep =
+  case pruneStep of
+    PrunningDone _ ->
+      Cmd.none
+
+    PruneStep _ ->
+      MsgPruneStep pruneStep
+        |> Task.succeed
+        |> Task.perform identity
 
 
 cmdReroll options partialGuess =
@@ -350,15 +409,44 @@ cmdReroll options partialGuess =
     Nothing ->
       Cmd.none
 
-    Just first ->
-      Random.uniform first
-        (List.drop 1 optionsAtI)
+    Just firstOptions ->
+      optionsAtI
+        |> List.drop 1
+        |> Random.uniform firstOptions
         |> Random.generate
           (Reroll partialGuess)
 
 
 cspUpdate msg model =
   case msg of
+    MsgPruneStep pruneStep ->
+      let
+        problem = model.problem
+        pruneStepNext =
+          pruneUpdate pruneStep
+      in
+      case pruneStepNext of
+        PrunningDone options ->
+          ( { model
+            | problem =
+              { problem
+                | options = options
+              }
+            }
+          , cmdReroll options []
+          )
+        PruneStep step ->
+          ( { model
+            | problem =
+              { problem
+                | options =
+                  step.options
+              }
+            }
+          , cmdPruneFrom
+            pruneStepNext
+          )
+
     Reroll partialGuess next ->
       let
         nextPartialGuess =
@@ -424,7 +512,7 @@ cspView left top w h model =
       )
       --}
         :: List.map
-          toStringConstraints
+          toStringConstraint
             model.problem.constraints
     )
     ++ ( model.guesses
@@ -471,7 +559,7 @@ cspSubscriptions model =
 -- Csp Functions
 
 
-toStringConstraints constraint =
+toStringConstraint constraint =
   case constraint of
     AllDiff exceptions indexSet ->
       "AllDiff {"
@@ -577,6 +665,84 @@ templateToOptions template =
       (List.range 0)
 
 
+type PruneStep
+  = PrunningDone Options
+  | PruneStep ConstraintStep
+
+
+type alias ConstraintStep =
+  { optionsBefore : Options
+  , constraintsPrev : List Constraint
+  , constraint : Constraint
+  , constraintsNext : List Constraint
+  , options : Options
+  }
+
+
+pruneUpdate pruneStep =
+  case pruneStep of
+    PrunningDone _ ->
+      pruneStep
+
+    PruneStep step ->
+      let
+        optionsNext =
+          pruneConstraint
+            step.constraint
+            step.options
+      in
+      case
+        List.head
+          step.constraintsNext
+      of
+      Nothing ->
+        -- Either the start of the next loop
+        -- Or the end of prunning.
+        if
+          step.optionsBefore
+            == optionsNext
+        then
+          PrunningDone optionsNext
+        else
+          let
+            allConstraints =
+              step.constraintsPrev
+                ++ [ step.constraint ]
+            firstConstraint =
+              allConstraints
+                |> List.head
+                |> Maybe.withDefault
+                  step.constraint
+          in
+          ConstraintStep
+            optionsNext
+            []
+            firstConstraint
+            ( List.drop 1 allConstraints )
+            optionsNext
+            |> PruneStep
+          
+      
+      Just laterConstraint ->
+        -- Either first or middel constraint
+        { step
+        | options = optionsNext
+        , constraintsPrev =
+          step.constraintsPrev
+            ++ ( case step.constraint of
+              Fix _ _ ->
+                []
+              _ ->
+                [ step.constraint ]
+            )
+        , constraint = laterConstraint
+        , constraintsNext =
+          step.constraintsNext
+            |> List.drop 1
+        }
+          |> PruneStep
+
+
 prune constraints options =
   let
     optionsNext =
@@ -670,21 +836,13 @@ pruneConstraint constraint options =
                 |> List.indexedMap
                   (\i optionsAtI ->
                     if
-                      Set.member i diffSet
-                        && ( List.drop 1 optionsAtI
-                            /= []
-                            )
+                      (Set.member i diffSet)
+                        && List.drop 1 optionsAtI
+                          /= []
                     then
-                      let
-                        filteredOptions =
-                          optionsAtI
-                            |> List.filter
-                              ((/=) singleton)
-                      in
-                      if filteredOptions == [] then
-                        optionsAtI
-                      else
-                        filteredOptions
+                      optionsAtI
+                        |> List.filter
+                          ((/=) singleton)
                     else
                       optionsAtI
                   )
