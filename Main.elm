@@ -265,13 +265,7 @@ debuggerSubscriptions model =
 
 
 delayFor msg =
-  case msg of
-    Reroll options partial ->
-      1000 / 3
-      
-    MsgPruneStep _ ->
-      1000
-
+  0
 
 
 -- End of ./src/Debugger.elm
@@ -346,18 +340,173 @@ setCsp template constraints solver =
 
 
 cspInitCmd =
-  cmdPrune
+  cmdRandomAllDiffCsp 3
+  {-- cmdPrune
     cspInit.problem.template
     cspInit.problem.constraints
+  --}
 
 
 -- Csp Update
 
 
 type CspMsg
-  = Reroll Answer Int
+  = RandomGuess Answer
   | MsgPruneStep PruneStep
+  | SetCsp Answer (List Constraint)
 
+
+cmdRandomAllDiffCsp len =
+  let
+    template =
+      List.repeat len (len - 1)
+    answerValue =
+      List.range 0 (len - 1)
+  in
+  randShuffle
+    answerValue
+    []
+    |> Random.andThen
+      (randConstraints template)
+    |> Random.map
+      ( filterConstraints template )
+    |> Random.generate
+      (SetCsp template)
+
+
+randConstraints template answer =
+  randConstraintsFrom
+    template
+    answer
+    [ template
+      |> List.length
+      |> (\l -> l - 1 )
+      |> List.range 0
+      -- [0, 1, 2, ...]
+      |> Set.fromList
+      |> AllDiff 0
+    ]
+
+
+randConstraintsFrom template answer constraints =
+  let
+    options =
+      templateToOptions template
+        |> prune constraints
+    nonSingleton =
+      options
+        |> List.indexedMap Tuple.pair
+        |> List.foldl
+          (\(i, optionsAtI) nons->
+            if
+              List.drop 1 optionsAtI == []
+            then
+              nons
+            else
+              i :: nons
+          )
+          []
+  in
+  case List.head nonSingleton of
+    Nothing ->
+      Random.constant constraints
+
+    Just firstI ->
+      Random.pair
+        ( nonSingleton
+          |> List.drop 1
+          |> Random.uniform firstI
+        )
+        (Random.int 0 1)
+        |> Random.andThen
+          (\(randNonSingletonI, constraintType ) ->
+            if constraintType == 0 then
+              randFixConstraint
+                answer
+                randNonSingletonI
+            else
+              randEqConstraint
+                answer
+                randNonSingletonI
+          )
+        |> Random.map
+          (\constraint ->
+            constraint
+              :: constraints
+          )
+        |> Random.andThen
+          ( randConstraintsFrom template answer )
+
+
+randFixConstraint answer randNonSingletonI =
+  answer
+    |> List.drop
+      randNonSingletonI
+    |> List.head
+    |> Maybe.withDefault 0
+    |> Fix randNonSingletonI
+    |> Random.constant
+
+
+randEqConstraint answer randNonSingletonI =
+  let
+    answerLen = List.length answer
+  in
+  Random.pair
+    ( Random.int 0 (answerLen - 2) )
+    ( Random.int 0 1 )
+    |> Random.map
+      (\(j, shouldFlip) ->
+        if j >= randNonSingletonI then
+          ( j + 1, shouldFlip )
+        else
+          ( j, shouldFlip )
+      )
+    |> Random.map
+      (\(j, shouldFlip) ->
+        if shouldFlip == 1 then
+          (j, randNonSingletonI)
+        else
+          (randNonSingletonI, j)
+      )
+    |> Random.map
+      (\(i, j) ->
+        let
+          answerAtI =
+            answer
+              |> List.drop i
+              |> List.head
+              |> Maybe.withDefault 0
+          answerAtJ =
+            answer
+              |> List.drop j
+              |> List.head
+              |> Maybe.withDefault 0
+        in
+        Eq i j (answerAtI - answerAtJ)
+      )
+  
+
+randShuffle remaining partial =
+  case List.head remaining of
+    Nothing ->
+      Random.constant partial
+
+    Just first ->
+      Random.uniform first
+        (List.drop 1 remaining)
+        |> Random.andThen
+          (\answerNext ->
+            let
+              remainingNext =
+                remaining
+                  |> List.filter
+                    ((/=) answerNext)
+            in
+            randShuffle
+              remainingNext
+              (answerNext :: partial)
+          )
 
 cmdPrune template constraints =
   let
@@ -393,32 +542,53 @@ cmdPruneFrom pruneStep =
         |> Task.perform identity
 
 
-cmdReroll options partialGuess =
+cmdRandomGuess options partialGuess =
+  randGuess options []
+    |> Random.generate
+      RandomGuess
+
+
+randGuess : Options -> Answer -> Random.Generator (List Int)
+randGuess options partialGuess =
   let
-    optionsAtI =
+    lenMinus1 =
+      List.length options - 1
+    lastOptionsList =
       options
-        |> List.drop
-          ( List.length options
-           - List.length partialGuess
-           - 1
-          )
+        |> List.drop lenMinus1
         |> List.head
         |> Maybe.withDefault []
   in
-  case List.head optionsAtI of
+  case List.head lastOptionsList of
     Nothing ->
-      Cmd.none
+      Random.constant partialGuess
 
-    Just firstOptions ->
-      optionsAtI
-        |> List.drop 1
-        |> Random.uniform firstOptions
-        |> Random.generate
-          (Reroll partialGuess)
+    Just firstOfTheLastOptionsList ->
+      let
+        optionsRemaining =
+          List.take lenMinus1 options
+      in
+      Random.uniform
+        firstOfTheLastOptionsList
+        ( List.drop 1 lastOptionsList )
+        |> Random.map
+          (\answerAtI ->
+            answerAtI
+              :: partialGuess
+          )
+        |> Random.andThen
+          ( randGuess
+              optionsRemaining
+          )
 
 
 cspUpdate msg model =
   case msg of
+    SetCsp template constraint ->
+      ( setCsp template constraint model
+      , cmdPrune template constraint
+      )
+
     MsgPruneStep pruneStep ->
       let
         problem = model.problem
@@ -433,7 +603,7 @@ cspUpdate msg model =
                 | options = options
               }
             }
-          , cmdReroll options []
+          , cmdRandomGuess options []
           )
         PruneStep step ->
           ( { model
@@ -447,42 +617,27 @@ cspUpdate msg model =
             pruneStepNext
           )
 
-    Reroll partialGuess next ->
-      let
-        nextPartialGuess =
-          next :: partialGuess
-      in
-      if
-        List.length nextPartialGuess
-          /= List.length
+    RandomGuess answer ->
+      ( { model
+        | guesses =
+          insertScore
+            model
+            answer
+            model.guesses
+        }
+      , if
+          getScore
             model.problem.template
-      then
-        ( model
-        , cmdReroll
-          model.problem.options
-          nextPartialGuess
-        )
-      else
-        ( { model
-          | guesses =
-            insertScore
-              model
-              nextPartialGuess
-              model.guesses
-          }
-        , if
-            getScore
-              model.problem.template
-              model.problem.constraints
-              nextPartialGuess
-              == 1.0
-          then
-            Cmd.none
-          else
-            cmdReroll
-              model.problem.options
-              []
-        )
+            model.problem.constraints
+            answer
+            == 1.0
+        then
+          Cmd.none
+        else
+          cmdRandomGuess
+            model.problem.options
+            []
+      )
 
 
 insertScore model guess guesses =
@@ -848,6 +1003,36 @@ pruneConstraint constraint options =
                   )
             )
             options
+
+
+filterConstraints template constraints =
+  let
+    allOptions =
+      templateToOptions template
+  in
+  constraints
+    |> List.foldr
+      (\constraint ( fc, options ) ->
+        let
+          constraintsNow =
+            constraint :: fc
+          optionsNow =
+            prune
+              constraintsNow
+              options
+        in
+        case constraint of
+          AllDiff _ _ ->
+            ( constraintsNow, options )
+        
+          _ ->
+            if optionsNow == options then
+              ( fc, options )
+            else
+              ( constraintsNow, options )
+      )
+      ( [], allOptions )
+    |> Tuple.first
 
 
 -- End of ./src/Csp.elm
