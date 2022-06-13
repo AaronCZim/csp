@@ -1014,22 +1014,22 @@ filterConstraints template constraints =
     |> List.foldr
       (\constraint ( fc, options ) ->
         let
-          constraintsNow =
+          constraintsNext =
             constraint :: fc
-          optionsNow =
+          optionsNext =
             prune
-              constraintsNow
+              constraintsNext
               options
         in
         case constraint of
           AllDiff _ _ ->
-            ( constraintsNow, options )
+            ( constraintsNext, optionsNext )
         
           _ ->
-            if optionsNow == options then
+            if optionsNext == options then
               ( fc, options )
             else
-              ( constraintsNow, options )
+              ( constraintsNext, optionsNext )
       )
       ( [], allOptions )
     |> Tuple.first
