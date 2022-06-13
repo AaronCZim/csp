@@ -282,6 +282,7 @@ delayFor msg =
 type alias CspModel =
   { guesses : List Answer
   , guessesLen : Int
+  , userInput : List Int
   , problem : Csp
   }
 
@@ -290,6 +291,7 @@ cspModelEmpty =
   CspModel
     []
     7
+    []
     cspEmpty
 
 
@@ -336,11 +338,16 @@ setCsp template constraints solver =
         template
         ( templateToOptions template )
         constraints
+    , userInput = []
   }
 
 
+cmdRandomProblem =
+  cmdRandomAllDiffCsp 4
+
+
 cspInitCmd =
-  cmdRandomAllDiffCsp 3
+  cmdRandomProblem
   {-- cmdPrune
     cspInit.problem.template
     cspInit.problem.constraints
@@ -354,6 +361,49 @@ type CspMsg
   = RandomGuess Answer
   | MsgPruneStep PruneStep
   | SetCsp Answer (List Constraint)
+  | InputValue Int
+  | ClearInput
+
+
+cmdRandomDoubleAllDiffCsp len1 len2 =
+  let
+    template =
+      List.repeat len1 (len1 - 1)
+       ++ List.repeat len2 (len2 - 1)
+    answer1Value =
+      List.range 0 (len1 - 1)
+    answer2Value =
+      List.range 0 (len2 - 1)
+  in
+  randShuffle
+    answer1Value
+    []
+    |> Random.andThen
+      (\answer1 ->
+        randShuffle
+          answer2Value
+          []
+          |> Random.andThen
+            (\answer2 ->
+              randConstraintsFrom
+                template
+                ( answer1 ++ answer2 )
+                [ List.range 0 (len1 - 1)
+                  -- [0, 1, 2, ...]
+                  |> Set.fromList
+                  |> AllDiff 0
+                , List.range len1
+                  ( len1 + len2 - 1 )
+                  -- [0, 1, 2, ...]
+                  |> Set.fromList
+                  |> AllDiff 0
+                ]
+            )
+      )
+      |> Random.map
+        ( filterConstraints template )
+      |> Random.generate
+        (SetCsp template)
 
 
 cmdRandomAllDiffCsp len =
@@ -367,25 +417,23 @@ cmdRandomAllDiffCsp len =
     answerValue
     []
     |> Random.andThen
-      (randConstraints template)
+      (\answer ->
+        randConstraintsFrom
+          template
+          answer
+          [ template
+            |> List.length
+            |> (\l -> l - 1 )
+            |> List.range 0
+            -- [0, 1, 2, ...]
+            |> Set.fromList
+            |> AllDiff 0
+          ]
+      )
     |> Random.map
       ( filterConstraints template )
     |> Random.generate
       (SetCsp template)
-
-
-randConstraints template answer =
-  randConstraintsFrom
-    template
-    answer
-    [ template
-      |> List.length
-      |> (\l -> l - 1 )
-      |> List.range 0
-      -- [0, 1, 2, ...]
-      |> Set.fromList
-      |> AllDiff 0
-    ]
 
 
 randConstraintsFrom template answer constraints =
@@ -584,6 +632,34 @@ randGuess options partialGuess =
 
 cspUpdate msg model =
   case msg of
+    InputValue inputValue ->
+      let
+        userInput =
+          model.userInput
+            ++ [ inputValue ]
+      in
+      if
+        getScore
+          model.problem.template
+          model.problem.constraints
+          userInput
+          == 1.0
+      then
+        ( model
+        , cmdRandomProblem
+        )
+      else
+        ( { model
+          | userInput = userInput
+          }
+        , Cmd.none
+        )
+    
+    ClearInput ->
+      ( { model | userInput = [] }
+      , Cmd.none
+      )
+    
     SetCsp template constraint ->
       ( setCsp template constraint model
       , cmdPrune template constraint
@@ -658,35 +734,23 @@ insertScore model guess guesses =
 
 
 cspView left top w h model =
-  ( ( ( model.problem.options
+  ( ( ( model.problem.template
         |> Debug.toString
       )
-      {-- ( model.problem.template
-        |> List.map String.fromInt
-        |> String.join ","
-      )
-      --}
-        :: List.map
-          toStringConstraint
-            model.problem.constraints
+      :: List.map
+        toStringConstraint
+          model.problem.constraints
     )
-    ++ ( model.guesses
-        |> List.map
-          (\guess ->
-            ( guess
-              |> List.map String.fromInt
-              |> String.join ","
-            )
-              ++ ": "
-              ++ ( getScore
-                    model.problem.template
-                    model.problem.constraints
-                    guess
-                  |> String.fromFloat
-                  |> String.left 5
-                )
+    ++ [ ( ( model.userInput
+            |> List.map String.fromInt
           )
-      )
+            ++ List.repeat
+              ( List.length model.problem.template )
+              "_"
+        )
+          |> List.take ( List.length model.problem.template )
+          |> String.join " "
+      ]
   )
     |> List.indexedMap (\i str ->
         text_
@@ -708,7 +772,20 @@ cspView left top w h model =
 
 
 cspSubscriptions model =
-  Sub.none
+  Browser.Events.onKeyDown
+    ( Json.Decode.field
+      "key"
+      Json.Decode.string
+      |> Json.Decode.map
+        (\str ->
+          case String.toInt str of
+            Nothing ->
+              ClearInput
+            
+            Just inputValue ->
+              InputValue inputValue
+        )
+    )
 
 
 -- Csp Functions
