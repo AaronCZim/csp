@@ -476,7 +476,35 @@ dokuUpdate msg model =
             , Cmd.none
             )
           else
-            ( model, Cmd.none )
+            case model.highlight of
+              CellHighlight cellX cellY ->
+                if key == "." || key == "+" then
+                  ( { model
+                    | doku =
+                      model.doku
+                        |> xyMap
+                          (\cX cY cell ->
+                            if
+                              (cX == cellX)
+                              && (cY == cellY)
+                            then
+                              EmptyCell
+                            else
+                              cell
+                          )
+                    , highlight = NoHighlight
+                    }
+                  , Cmd.none
+                  )
+                else
+                  ( model, Cmd.none )
+                
+              _ ->
+                ( { model
+                  | highlight = NoHighlight
+                  }
+                , Cmd.none
+                )
           
         Just value ->
           if value == 0 then
@@ -505,14 +533,38 @@ dokuUpdate msg model =
                 )
                 
               CellHighlight cellX cellY ->
-                ( { model | highlight = NoHighlight
-                  , doku =
-                    model.doku
-                      |> set cellX cellY
-                        (GuessCell (value - 1))
-                  }
-                , Cmd.none
-                )
+                let
+                  dokuNext =
+                      model.doku
+                        |> set cellX cellY
+                          (GuessCell (value - 1))
+                in
+                if
+                  -- If the full board
+                  -- with no contradictions,
+                  -- then it is done.
+                  ( dokuNext
+                    |> toListDoku
+                    |> List.all ((/=) EmptyCell)
+                  )
+                    && ( dokuNext
+                        |> toCspModelDoku
+                        |> .problem
+                        |> .options
+                        |> List.all ((/=) [])
+                      )
+                then
+                  ( { model | highlight = NoHighlight
+                    , doku = emptyDoku
+                    }
+                  , cmdRandomCell
+                  )
+                else
+                  ( { model | highlight = NoHighlight
+                    , doku = dokuNext
+                    }
+                  , Cmd.none
+                  )
           else
             ( model, Cmd.none )
 
@@ -579,7 +631,11 @@ dokuGameView left top w h model =
         in
         viewLine
           black
-          2
+          ( if i == 1 || i == 3 then
+            2
+            else
+            4
+          )
           l
           top
           l
@@ -598,13 +654,33 @@ dokuGameView left top w h model =
         in
         viewLine
           black
-          2
+          ( if i == 1 || i == 3 then
+            2
+            else
+            4
+          )
           left
           t
           (left + w)
           t
       )
     |> g []
+  , viewCircleFill black
+    0
+    0
+    2
+  , viewCircleFill black
+    w
+    0
+    2
+  , viewCircleFill black
+    w
+    h
+    2
+  , viewCircleFill black
+    0
+    h
+    2
   , model.doku
     |> xyMap
       (\cX cY cell ->
