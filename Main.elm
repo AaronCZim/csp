@@ -13,6 +13,7 @@ import Dict
 import Set
 import Json.Decode
 import Random
+import Array
 
 
 -- MAIN
@@ -33,7 +34,7 @@ main =
 type alias Model =
   { w : Float
   , h : Float
-  , doku : DokuModel
+  , sudoku : SudokuModel
   }
 
 
@@ -43,12 +44,12 @@ defaultH = 128
 
 init : () -> (Model, Cmd Msg)
 init _ =
-  ( Model defaultW defaultH dokuInit
+  ( Model defaultW defaultH sudokuInit
   , Cmd.batch
     [ Task.attempt
       getSizeFromViewport
       Browser.Dom.getViewport
-    , Cmd.map MsgDoku cmdDokuInit
+    , Cmd.map MsgSudoku cmdSudokuInit
     ]
   )
 
@@ -71,21 +72,21 @@ getSizeFromViewport resultViewport =
 
 type Msg
   = SetSizeFromViewport Float Float
-  | MsgDoku DokuMsg
+  | MsgSudoku SudokuMsg
 
 
 update : Msg -> Model -> (Model, Cmd Msg)
 update msg model =
   case msg of
-    MsgDoku dokuMsg ->
+    MsgSudoku sudokuMsg ->
       let
-        ( doku, cmd ) =
-          dokuUpdate
-            dokuMsg
-            model.doku
+        ( sudoku, cmd ) =
+          sudokuUpdate
+            sudokuMsg
+            model.sudoku
       in
-      ( { model | doku = doku }
-      , Cmd.map MsgDoku cmd
+      ( { model | sudoku = sudoku }
+      , Cmd.map MsgSudoku cmd
       )
     
     SetSizeFromViewport w h ->
@@ -136,9 +137,9 @@ view model =
       , fill "LightBlue"
       ]
       []
-    , dokuView 0 0 model.w model.h
-      model.doku
-        |> Svg.map MsgDoku
+    , sudokuView 0 0 model.w model.h
+      model.sudoku
+        |> Svg.map MsgSudoku
     ]
 
 
@@ -327,8 +328,8 @@ subscriptions model =
     [ Browser.Events.onResize
       setSizeFromViewport
     , Sub.map
-      MsgDoku
-      (dokuSubscriptions model.doku)
+      MsgSudoku
+      (sudokuSubscriptions model.sudoku)
     ]
 
 setSizeFromViewport w h =
@@ -340,43 +341,30 @@ setSizeFromViewport w h =
 -- End of ./src/Main.elm
 
 
--- Start of ./src/Doku.elm
--- module Doku exposing(..)
+-- Start of ./src/Sudoku.elm
+-- module Sudoku exposing(..)
 -- Copy "import" lines from the top of Main.elm
 
 
 -- Model
 
 
-type alias DokuModel =
+type alias SudokuModel =
   { highlight : Highlight
   , viewingLogic : Bool
-  , doku : Doku
+  , sudoku : Sudoku
   }
 
 
-dokuEmpty =
-  DokuModel NoHighlight False emptyDoku
+sudokuEmpty =
+  SudokuModel NoHighlight False emptySudoku
 
 
-type alias Doku =
-  ( ( Col, Col ), ( Col, Col ) )
+type alias Sudoku =
+  Array.Array Cell
 
-
-type alias Col =
-  ( ( Cell, Cell ), ( Cell, Cell ) )
-
-
-emptyCol =
-  ( ( EmptyCell, EmptyCell )
-  , ( EmptyCell, EmptyCell )
-  )
-
-
-emptyDoku =
-  ( ( emptyCol, emptyCol )
-  , ( emptyCol, emptyCol )
-  )
+emptySudoku =
+  Array.repeat 81 EmptyCell
 
 
 type Cell
@@ -391,71 +379,61 @@ type Highlight
   | CellHighlight Int Int
 
 
-dokuInit : DokuModel
-dokuInit =
-  { dokuEmpty
-  | doku =
-    emptyDoku
-      {--
-      |> set 0 0 (ConstCell 0)
-      |> set 1 3 (ConstCell 0)
-      |> set 2 1 (ConstCell 0)
-      |> set 0 3 (ConstCell 1)
-      |> set 2 3 (ConstCell 3)
-      |> set 3 3 (ConstCell 2)
-      |> set 1 1 (ConstCell 2)
-      --}
-  }
+sudokuInit : SudokuModel
+sudokuInit =
+  sudokuEmpty
 
 
 -- Update
 
 
-type DokuMsg
+type SudokuMsg
   = KeyDown String
   | RandomCell ( ( Int, Int ), Int )
 
 
-cmdDokuInit =
+cmdSudokuInit =
   cmdRandomCell
 
 
 cmdRandomCell =
   Random.pair
     ( Random.pair
-      (Random.int 0 3)
-      (Random.int 0 3)
+      (Random.int 0 8)
+      (Random.int 0 8)
     )
-    (Random.int 0 3)
+    (Random.int 0 8)
     |> Random.generate
       RandomCell
 
 
-dokuUpdate msg model =
+sudokuUpdate msg model =
   case msg of
     RandomCell ( ( cX, cY ), value ) ->
       let
-        dokuNext =
-          model.doku
-            |> set cX cY (GuessCell (value))
-        dokuCspOptions =
-          toCspModelDoku dokuNext
+        sudokuNext =
+          model.sudoku
+            |> sudokuSet cX cY (GuessCell (value))
+        sudokuCspOptions =
+          toCspModelSudoku sudokuNext
             |> .problem
             |> .options
       in
+      {--
       if
-        dokuCspOptions
+        sudokuCspOptions
           |> List.any ((==) [])
       then
         ( model
         , cmdRandomCell
         )
       else
-        ( { model | doku = dokuNext }
+      --}
+        ( { model | sudoku = sudokuNext }
         , if
             -- If all singletons,
             -- then done.
-            dokuCspOptions
+            sudokuCspOptions
               |> List.map (List.drop 1)
               |> List.all ((==) [])
           then
@@ -480,9 +458,9 @@ dokuUpdate msg model =
               CellHighlight cellX cellY ->
                 if key == "." || key == "+" then
                   ( { model
-                    | doku =
-                      model.doku
-                        |> xyMap
+                    | sudoku =
+                      model.sudoku
+                        |> sudokuXyMap
                           (\cX cY cell ->
                             if
                               (cX == cellX)
@@ -534,34 +512,34 @@ dokuUpdate msg model =
                 
               CellHighlight cellX cellY ->
                 let
-                  dokuNext =
-                      model.doku
-                        |> set cellX cellY
+                  sudokuNext =
+                      model.sudoku
+                        |> sudokuSet cellX cellY
                           (GuessCell (value - 1))
                 in
                 if
                   -- If the full board
                   -- with no contradictions,
                   -- then it is done.
-                  ( dokuNext
-                    |> toListDoku
+                  ( sudokuNext
+                    |> Array.toList
                     |> List.all ((/=) EmptyCell)
                   )
-                    && ( dokuNext
-                        |> toCspModelDoku
+                    && ( sudokuNext
+                        |> toCspModelSudoku
                         |> .problem
                         |> .options
                         |> List.all ((/=) [])
                       )
                 then
                   ( { model | highlight = NoHighlight
-                    , doku = emptyDoku
+                    , sudoku = emptySudoku
                     }
                   , cmdRandomCell
                   )
                 else
                   ( { model | highlight = NoHighlight
-                    , doku = dokuNext
+                    , sudoku = sudokuNext
                     }
                   , Cmd.none
                   )
@@ -576,19 +554,19 @@ dokuUpdate msg model =
 black = "rgb(50,50,50)"
 
 
-dokuView left top w h model =
+sudokuView left top w h model =
   if model.viewingLogic then
-    model.doku
-      |> toCspModelDoku
+    model.sudoku
+      |> toCspModelSudoku
       |> cspView left top w h
   else
-    dokuGameView left top w h model
+    sudokuGameView left top w h model
 
 
-dokuGameView left top w h model =
+sudokuGameView left top w h model =
   let
-    cellW = w / 4
-    cellH = h / 4
+    cellW = w / 9
+    cellH = h / 9
     cellWMargin = cellW / 8
     cellHMargin = cellH / 8
     cellWInner = cellW * 3 / 4
@@ -603,7 +581,7 @@ dokuGameView left top w h model =
         )
         top
         cellW
-        (cellH * 4)
+        (cellH * 9)
       
     CellHighlight cellX cellY ->
       viewRectFill
@@ -619,22 +597,21 @@ dokuGameView left top w h model =
       
     NoHighlight ->
       g [] []
-  , List.range 0 4
+  , List.range 0 9
     -- [ 0, 1, 2, 3, 4 ]
-    |> List.map toFloat
     |> List.map
       (\i ->
         let
           l =
-            (i * cellW)
+            (toFloat i * cellW)
               + left
         in
         viewLine
           black
-          ( if i == 1 || i == 3 then
-            2
-            else
+          ( if modBy 3 i == 0 then
             4
+            else
+            1
           )
           l
           top
@@ -642,22 +619,21 @@ dokuGameView left top w h model =
           (top + h)
       )
     |> g []
-  , List.range 0 4
+  , List.range 0 9
     -- [ 0, 1, 2, 3, 4 ]
-    |> List.map toFloat
     |> List.map
       (\i ->
         let
           t =
-            (i * cellH)
+            (toFloat i * cellH)
               + top
         in
         viewLine
           black
-          ( if i == 1 || i == 3 then
-            2
-            else
+          ( if modBy 3 i == 0 then
             4
+            else
+            1
           )
           left
           t
@@ -681,10 +657,12 @@ dokuGameView left top w h model =
     0
     h
     2
-  , model.doku
-    |> xyMap
-      (\cX cY cell ->
+  , model.sudoku
+    |> sudokuXyMap
+      (\cXInt cYInt cell ->
         let
+          cX = toFloat cXInt
+          cY = toFloat cYInt
           l =
             ((cX * cellW)
               + left
@@ -722,7 +700,7 @@ dokuGameView left top w h model =
                 (value + 1)
               )
       )
-    |> toListDoku
+    |> Array.toList
     |> g []
   ]
     |> g []
@@ -731,7 +709,7 @@ dokuGameView left top w h model =
 -- Subscriptions
 
 
-dokuSubscriptions model =
+sudokuSubscriptions model =
   Browser.Events.onKeyDown
     (Json.Decode.field "key"
       Json.Decode.string
@@ -743,90 +721,37 @@ dokuSubscriptions model =
 -- Functions
 
 
-set dX dY value model =
-  indexedMapPPair
-      (\colX col ->
-        if colX == dX then
-          setPPair dY value col
-        else
-          col
+sudokuSet dX dY value sudoku =
+  Array.set (dX + (dY * 9)) value sudoku
+
+
+sudokuXyMap map sudoku =
+  sudoku
+    |> Array.indexedMap
+      (\i cell ->
+        map (modBy 9 i) (i // 9) cell
       )
-      model
 
 
-xyMap map doku =
-  indexedMapPPair
-      (\colX col ->
-        indexedMapPPair
-            (map colX)
-            col
-      )
-      doku
-
-
-setPPair dX value ppair =
-  indexedMapPPair
-      (\i v ->
-        if i == dX then
-          value
-        else
-          v
-      )
-      ppair
-
-
-indexedMapPPair map ( (d0, d1), (d2, d3) ) =
-  ( ( map 0 d0
-    , map 1 d1
-    )
-  , ( map 2 d2
-    , map 3 d3
-    )
-  )
-
-
-toListPPair ( (d0, d1), (d2, d3) ) =
-  [ d0, d1, d2, d3 ]
-
-toListDoku doku =
-  doku 
-    |> toListPPair
-    -- [ ( (d0, d1), (d2, d3) )
-    -- , ( (d0, d1), (d2, d3) )
-    -- , ( (d0, d1), (d2, d3) )
-    -- , ( (d0, d1), (d2, d3) )
-    -- ]
-    |> List.map toListPPair
-    -- [ [ d0, d1, d2, d3 ]
-    -- , [ d0, d1, d2, d3 ]
-    -- , [ d0, d1, d2, d3 ]
-    -- , [ d0, d1, d2, d3 ]
-    -- ]
-    |> List.concat
-
-
-toCspModelDoku doku =
-  Csp dokuTemplate
-    ( templateToOptions dokuTemplate
+toCspModelSudoku sudoku =
+  Csp sudokuTemplate
+    ( templateToOptions sudokuTemplate
       |> prune
-        ( toConstraintsDoku doku
-          ++ dokuRuleConstraints
+        ( toConstraintsSudoku sudoku
+          ++ sudokuRuleConstraints
         )
     )
-    ( toConstraintsDoku doku
-      ++ dokuRuleConstraints
+    ( toConstraintsSudoku sudoku
+      ++ sudokuRuleConstraints
     )
     |> CspModel [] 7 []
+
     
     
-toConstraintsDoku doku =
-  doku
-    |> xyMap
-      (\cX cY cell ->
-        let
-          tileNumber =
-            cX + (cY * 4)
-        in
+toConstraintsSudoku sudoku =
+  sudoku
+    |> Array.indexedMap
+      (\tileNumber cell ->
         case cell of
           ConstCell value ->
             Just (Fix tileNumber value)
@@ -837,38 +762,48 @@ toConstraintsDoku doku =
           _ ->
             Nothing
       )
-    |> toListDoku
+    |> Array.toList
     |> List.filterMap identity
 
 
-dokuTemplate =
-  List.repeat 16 3
+sudokuTemplate =
+  List.repeat 81 8
 
 
-dokuRuleConstraints =
+sudokuRuleConstraints =
   -- Row Constraints
-  [ AllDiff 0 (Set.fromList [0,1,2,3])
-  , AllDiff 0 (Set.fromList [4,5,6,7])
-  , AllDiff 0 (Set.fromList [8,9,10,11])
-  , AllDiff 0 (Set.fromList [12,13,14,15])
-  ]
+  ( List.range 0 9
+    |> List.map (\i ->
+        List.range (i * 9) ((i * 9) + 8)
+      )
+    |> List.map Set.fromList
+    |> List.map (AllDiff 0)
+  )
   ++
   -- Column Constraints
-  [ AllDiff 0 (Set.fromList [0,4,8,12])
-  , AllDiff 0 (Set.fromList [1,5,9,13])
-  , AllDiff 0 (Set.fromList [2,6,10,14])
-  , AllDiff 0 (Set.fromList [3,7,11,15])
-  ]
+  ( List.range 0 9
+    |> List.map (\i ->
+        List.range i 9
+          |> List.map ((*) 9)
+          |> List.map ((+) 1)
+      )
+    |> List.map Set.fromList
+    |> List.map (AllDiff 0)
+  )
   ++
-  -- Quadrant Constraints
-  [ AllDiff 0 (Set.fromList [0,1,4,5])
-  , AllDiff 0 (Set.fromList [2,3,6,7])
-  , AllDiff 0 (Set.fromList [8,9,12,13])
-  , AllDiff 0 (Set.fromList [10,11,14,15])
+  [ AllDiff 0 (Set.fromList [0,1,2,9,10,11,18,19,20])
+  , AllDiff 0 (Set.fromList [27,28,29,36,37,38,45,46,47])
+  , AllDiff 0 (Set.fromList [54,55,56,63,64,65,72,73,74])
+  , AllDiff 0 (Set.fromList [3,4,5,12,13,14,21,22,23])
+  , AllDiff 0 (Set.fromList [30,31,32,39,40,41,48,49,50])
+  , AllDiff 0 (Set.fromList [57,58,59,66,67,68,75,76,77])
+  , AllDiff 0 (Set.fromList [6,7,8,15,16,17,24,25,26])
+  , AllDiff 0 (Set.fromList [33,34,35,40,41,42,49,50,51])
+  , AllDiff 0 (Set.fromList [60,61,62,69,70,71,78,79,80])
   ]
 
 
--- End of ./src/Doku.elm
+-- End of ./src/Sudoku.elm
 
 
 -- Start of ./src/Csp.elm
