@@ -419,7 +419,6 @@ sudokuUpdate msg model =
             |> .problem
             |> .options
       in
-      {--
       if
         sudokuCspOptions
           |> List.any ((==) [])
@@ -428,7 +427,6 @@ sudokuUpdate msg model =
         , cmdRandomCell
         )
       else
-      --}
         ( { model | sudoku = sudokuNext }
         , if
             -- If all singletons,
@@ -492,7 +490,7 @@ sudokuUpdate msg model =
             , Cmd.none
             )
             
-          else if value <= 4 && value > 0 then
+          else if value <= 9 && value > 0 then
             case model.highlight of
               ColHighlight colX ->
                 ( { model
@@ -772,7 +770,7 @@ sudokuTemplate =
 
 sudokuRuleConstraints =
   -- Row Constraints
-  ( List.range 0 9
+  ( List.range 0 8
     |> List.map (\i ->
         List.range (i * 9) ((i * 9) + 8)
       )
@@ -781,11 +779,11 @@ sudokuRuleConstraints =
   )
   ++
   -- Column Constraints
-  ( List.range 0 9
+  ( List.range 0 8
     |> List.map (\i ->
-        List.range i 9
+        List.range 0 8
           |> List.map ((*) 9)
-          |> List.map ((+) 1)
+          |> List.map ((+) i)
       )
     |> List.map Set.fromList
     |> List.map (AllDiff 0)
@@ -798,7 +796,7 @@ sudokuRuleConstraints =
   , AllDiff 0 (Set.fromList [30,31,32,39,40,41,48,49,50])
   , AllDiff 0 (Set.fromList [57,58,59,66,67,68,75,76,77])
   , AllDiff 0 (Set.fromList [6,7,8,15,16,17,24,25,26])
-  , AllDiff 0 (Set.fromList [33,34,35,40,41,42,49,50,51])
+  , AllDiff 0 (Set.fromList [33,34,35,42,43,44,51,52,53])
   , AllDiff 0 (Set.fromList [60,61,62,69,70,71,78,79,80])
   ]
 
