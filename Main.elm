@@ -389,55 +389,74 @@ sudokuInit =
 
 type SudokuMsg
   = KeyDown String
-  | RandomCell ( ( Int, Int ), Int )
+  | RandomCell ( List (List Int) ) ( Int, Int )
 
 
 cmdSudokuInit =
   cmdRandomCell
-
-
-cmdRandomCell =
-  Random.pair
-    ( Random.pair
-      (Random.int 0 8)
-      (Random.int 0 8)
+    ( templateToOptions
+      sudokuTemplate
     )
-    (Random.int 0 8)
-    |> Random.generate
-      RandomCell
+
+
+cmdRandomCell options =
+  let
+    allRandomCells =
+      options
+        |> List.indexedMap
+          (\i optionsAtI ->
+            if List.drop 1 optionsAtI == [] then
+              []
+            else
+              optionsAtI
+                |> List.map (Tuple.pair i)
+          )
+        |> List.concat
+  in
+  case List.head allRandomCells of
+    Nothing ->
+      Cmd.none
+
+    Just first ->
+      Random.uniform first (List.drop 1 allRandomCells)
+        |> Random.generate
+          (RandomCell options)
 
 
 sudokuUpdate msg model =
   case msg of
-    RandomCell ( ( cX, cY ), value ) ->
+    RandomCell optionsPrev ( tileNumber, value ) ->
       let
         sudokuNext =
           model.sudoku
-            |> sudokuSet cX cY (GuessCell (value))
-        sudokuCspOptions =
+            |> Array.set tileNumber (GuessCell (value))
+        options =
           toCspModelSudoku sudokuNext
             |> .problem
             |> .options
       in
       if
-        sudokuCspOptions
+        options
           |> List.any ((==) [])
       then
-        ( model
+        ( sudokuInit
         , cmdRandomCell
+          ( templateToOptions
+            sudokuTemplate
+          )
         )
       else
         ( { model | sudoku = sudokuNext }
         , if
             -- If all singletons,
             -- then done.
-            sudokuCspOptions
+             options
               |> List.map (List.drop 1)
               |> List.all ((==) [])
           then
             Cmd.none
           else
-            cmdRandomCell
+            cmdRandomCell options
         )
       
 
@@ -490,7 +509,7 @@ sudokuUpdate msg model =
             , Cmd.none
             )
             
-          else if value <= 9 && value > 0 then
+          else
             case model.highlight of
               ColHighlight colX ->
                 ( { model
@@ -534,6 +553,9 @@ sudokuUpdate msg model =
                     , sudoku = emptySudoku
                     }
                   , cmdRandomCell
+                      ( templateToOptions
+                        sudokuTemplate
+                      )
                   )
                 else
                   ( { model | highlight = NoHighlight
@@ -541,8 +563,6 @@ sudokuUpdate msg model =
                     }
                   , Cmd.none
                   )
-          else
-            ( model, Cmd.none )
 
 
 
