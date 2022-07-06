@@ -357,16 +357,19 @@ type alias LogicGridModel =
   }
 
 logicGridInit =
-  [ Fix 0 1
-  , AllDiff 0 (Set.fromList [0,1,2])
-  , AllDiff 1 (Set.fromList [0,1,2])
-  , Eq 0 1 0
-  , Eq 0 1 1
+  [ AllDiff 0 (Set.fromList [0,1,2])
+  , AllDiff 0 (Set.fromList [3,4,5])
+  , Fix 0 0
+  , Fix 1 1
+  , Fix 2 2
+  , Fix 3 0
+  , Fix 4 1
+  , Eq 5 4 1
   ]
     |> LogicGridModel
-      (GridHighlight 1)
+      NoHighlight
       (Array.repeat 9 Nothing)
-      (Array.repeat 9 (Just True))
+      (Array.repeat 9 Nothing)
 
 
 logicGridEmpty =
@@ -462,10 +465,11 @@ setCell gridI colI rowI toValue model =
     ( { model
       | highlight = NoHighlight
       , grid0 =
-        model.grid0
-          |> Array.set
-            (colI + (rowI * 3))
-            toValue
+        gridSet
+          colI
+          rowI
+          toValue
+          model.grid0
       }
     , Cmd.none
     )
@@ -473,14 +477,39 @@ setCell gridI colI rowI toValue model =
     ( { model
       | highlight = NoHighlight
       , grid1 =
-        model.grid1
-          |> Array.set
-            (colI + (rowI * 3))
-            toValue
+        gridSet
+          colI
+          rowI
+          toValue
+          model.grid1
       }
     , Cmd.none
     )
 
+
+gridSet colI rowI toValue grid =
+  if
+    Maybe.withDefault False toValue
+      == True
+  then
+    grid
+      |> Array.indexedMap
+        (\i cell ->
+          if modBy 3 i == colI then
+            if i // 3 == rowI then
+              Just True
+            else 
+              Just False
+          else if i // 3 == rowI then
+            Just False
+          else
+            cell
+        )
+  else
+    grid
+      |> Array.set
+        (colI + (rowI * 3))
+        toValue
 
 
 -- View
@@ -501,6 +530,9 @@ logicGridView left top w h model =
     top
     halfW
     h
+    ( toOptionsGrid 3 model.grid0
+      ++ toOptionsGrid 3 model.grid1
+    )
     model.constraints
   , logicGridGridView
     left
@@ -539,7 +571,7 @@ logicGridView left top w h model =
     |> g []
 
 
-logicGridConstraintsView left top w h constraints =
+logicGridConstraintsView left top w h options constraints =
   let
     rowH =
       h
@@ -549,16 +581,34 @@ logicGridConstraintsView left top w h constraints =
           )
   in
   constraints
-    |> List.map toStringGridConstraint
     |> List.indexedMap
-      (\i str ->
+      (\i constraint ->
+        let
+          colour =
+            if
+              isGuaranteed
+                options
+                constraint
+            then
+              "Green"
+            else if
+              isPossible
+                options
+                constraint
+            then
+              black
+            else
+              "red"
+        in
         viewFillText
-          black
+          colour
           left
           (top + (rowH * toFloat i))
           w
           rowH
-          str
+          ( toStringGridConstraint
+            constraint
+          )
       )
     |> g []
 
@@ -884,7 +934,7 @@ toStringGridConstraint constraint =
       "Diff{"
         ++ ( indexSet
             |> Set.toList
-            |> List.map String.fromInt
+            |> List.map gridIndex
             |> String.join ","
           )
         ++ "}"
@@ -914,7 +964,6 @@ toStringGridConstraint constraint =
           )
 
 
-
 gridIndex atI =
   "ABCXYZ"
     |> String.toList
@@ -922,6 +971,31 @@ gridIndex atI =
     |> List.drop atI
     |> List.head
     |> Maybe.withDefault ""
+
+toOptionsGrid cols grid =
+  grid
+    |> Array.map (Maybe.withDefault True)
+    |> Array.indexedMap Tuple.pair
+    |> Array.toList
+    |> List.foldr
+      (\(i, isOpPossible) (opsAtI, options)->
+        let
+          opsAtINext =
+            if isOpPossible then
+              (modBy 3 i) :: opsAtI
+            else
+              opsAtI
+        in
+        if modBy 3 i == 0 then
+          ( []
+          , opsAtINext :: options
+          )
+        else
+          ( opsAtINext, options )
+      )
+      ([], [])
+    --|> \(opsAtI, options) -> opsAtI :: options
+    |> Tuple.second
 
 
 -- End of ./src/LogicGrid.elm
@@ -1545,6 +1619,149 @@ isConstrained guess constraint =
     
     Eq i j offset ->
       get i == (get j + offset)
+
+
+isPossible options constraint =
+  if
+    options
+      |> List.any
+        (List.length >> (==) 0)
+  then
+    False
+  else
+    let
+      at i =
+        options
+          |> List.drop i
+          |> List.head
+          |> Maybe.withDefault []
+    in
+    case constraint of
+      AllDiff exceptions diffSet ->
+        -- TODO: What is one index has all values.
+        options
+          |> List.indexedMap Tuple.pair
+          |> List.filterMap
+            (\(i, optionsAtI) ->
+              if
+                Set.member i diffSet
+              then
+                Set.fromList
+                  optionsAtI
+                  |> Just
+              else
+                Nothing
+            )
+          -- All values in the diffset
+          -- turned from lists to set
+          |> List.foldl
+            Set.union
+            Set.empty
+          -- All unique values.
+          |> Set.size
+          -- Size is how many
+          -- unique values there are
+          -- in the diffset.
+          |> (+) exceptions
+          |> (\uniqueValues ->
+            uniqueValues
+              >= Set.size diffSet
+            )
+
+      Fix i value ->
+        at i
+          |> List.any ((==) value)
+
+      Eq i j offset ->
+        let
+          opsAtISet =
+            Set.fromList (at i)
+        in
+        at j
+          |> List.map ((+) offset)
+          |> List.any
+            (\value ->
+              Set.member value opsAtISet
+            )
+
+
+isGuaranteed options constraint =
+  if
+    options
+      |> List.any
+        (List.length >> (==) 0)
+  then
+    False
+  else
+    let
+      at i =
+        options
+          |> List.drop i
+          |> List.head
+          |> Maybe.withDefault []
+    in
+    case constraint of
+      AllDiff exceptions diffSet ->
+        let
+          diffSetOptions =
+            options
+              |> List.indexedMap Tuple.pair
+              |> List.filterMap
+                (\(i, optionsAtI) ->
+                  if
+                    Set.member i diffSet
+                  then
+                    Set.fromList
+                      optionsAtI
+                      |> Just
+                  else
+                    Nothing
+                )
+        in
+        -- TODO: Remove duplicate comparisons.
+        --   optionSetAtI == optionSetAtJ
+        --   Never: optionSetAtJ == optionSetAtI
+        diffSetOptions
+          |> List.indexedMap Tuple.pair
+          |> List.all
+            (\(i, optionSetAtI) ->
+              diffSetOptions
+                |> List.indexedMap Tuple.pair
+                |> List.all
+                  (\(j, optionSetAtJ) ->
+                    if i == j then
+                      True
+                    else
+                      Set.intersect
+                        optionSetAtI
+                        optionSetAtJ
+                        |> Set.size
+                        |> (==) 0
+                  )
+            )
+
+      Fix i value ->
+        at i == [value]
+
+      Eq i j offset ->
+        let
+          optionsAtI = at i
+          optionsAtJ = at j
+        in
+        if
+          (List.drop 1 optionsAtI == [])
+            && (List.drop 1 optionsAtJ == [])
+            && (optionsAtI /= [])
+            && (optionsAtJ /= [])
+        then
+          (List.head optionsAtI)
+            == ( optionsAtJ
+              |> List.head
+              |> Maybe.map ((+) offset)
+              )
+        else
+          False
+        
 
 
 templateToOptions template =
