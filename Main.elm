@@ -948,7 +948,7 @@ toStringGridConstraint constraint =
     Fix atI value ->
       gridIndex atI
         ++ " = "
-        ++ String.fromInt value
+        ++ String.fromInt (value + 1)
 
     Eq atI atJ offset ->
       gridIndex atI
