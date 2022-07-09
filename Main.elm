@@ -351,8 +351,10 @@ setSizeFromViewport w h =
 
 type alias LogicGridModel =
   { highlight : Highlight
-  , grid0 : Array.Array (Maybe Bool)
-  , grid1 : Array.Array (Maybe Bool)
+  , gridDims : List Int
+  , grid : Array.Array (Maybe Bool)
+  , xLabels : String
+  , yLabels : String
   , constraints : List Constraint
   }
 
@@ -368,15 +370,19 @@ logicGridInit =
   ]
     |> LogicGridModel
       NoHighlight
-      (Array.repeat 9 Nothing)
-      (Array.repeat 9 Nothing)
+      [ 3, 3 ]
+      (Array.repeat 18 Nothing)
+      "123123"
+      "ABCXYZ"
 
 
 logicGridEmpty =
   LogicGridModel
     NoHighlight
-    (Array.repeat 9 Nothing)
-    (Array.repeat 9 Nothing)
+    [ 3, 3 ]
+    (Array.repeat 18 Nothing)
+    "123123"
+    "ABCXYZ"
     []
 
 
@@ -484,43 +490,29 @@ logicGridUpdate msg model =
 
 setCell gridI colI rowI toValue model =
   let
-    (grid0, grid1) =
-      if gridI == 0 then
-        ( gridSet
-          colI
-          rowI
-          toValue
-          model.grid0
-        , model.grid1
-        )
-      else
-        ( model.grid0
-        , gridSet
-          colI
-          rowI
-          toValue
-          model.grid1
-        )
+    gridNext =
+      setGrid
+        gridI
+        colI
+        rowI
+        toValue
+        model.grid
+        model.gridDims
   in
     ( { model
       | highlight = NoHighlight
-      , grid0 = grid0
-      , grid1 = grid1
+      , grid = gridNext
       }
     , if
-        ( grid0
+        gridNext
           |> Array.toList
           |> List.all ((/=) Nothing)
-        )
-        && ( grid1
-            |> Array.toList
-            |> List.all ((/=) Nothing)
-          )
       then
         let
           options =
-            toOptionsGrid 3 grid0
-              ++ toOptionsGrid 3 grid1
+            toOptionsGrid
+              model.gridDims
+              gridNext
         in
         if
           model.constraints
@@ -533,9 +525,34 @@ setCell gridI colI rowI toValue model =
       else
         Cmd.none
     )
+    
+setGrid gridI colI rowI toValue grid gridDims =
+  let
+    dim =
+      gridDims
+        |> List.drop gridI
+        |> List.head
+        |> Maybe.withDefault 0
+    startI =
+      gridDims
+        |> List.take gridI
+        |> List.foldl
+          (\d sum->
+            (d*d) + sum
+          )
+          0
+  in
+    setGridCell
+      startI
+      dim
+      dim
+      colI
+      rowI
+      toValue
+      grid
 
 
-gridSet colI rowI toValue grid =
+setGridCell startI cols rows colI rowI toValue grid =
   if
     Maybe.withDefault False toValue
       == True
@@ -543,20 +560,39 @@ gridSet colI rowI toValue grid =
     grid
       |> Array.indexedMap
         (\i cell ->
-          if modBy 3 i == colI then
-            if i // 3 == rowI then
-              Just True
-            else 
-              Just False
-          else if i // 3 == rowI then
-            Just False
-          else
+          if
+            (i < startI)
+              || ( i >=
+                  ( startI
+                    + (rows * cols)
+                  )
+                )
+          then
             cell
+          else
+            if
+              modBy cols (i - startI)
+                == colI
+            then
+              if
+                (i - startI) // cols
+                  == rowI
+              then
+                Just True
+              else 
+                Just False
+            else if
+              (i - startI) // cols
+                == rowI
+            then
+              Just False
+            else
+              cell
         )
   else
     grid
       |> Array.set
-        (colI + (rowI * 3))
+        (startI + colI + (rowI * cols))
         toValue
 
 
@@ -570,56 +606,66 @@ logicGridView left top w h model =
   let
     halfW = w / 2
     halfH = h / 2
-    cellW = (w - 20) / 8
-    cellH = (h - 20) / 8
+    options =
+      model.grid
+          |> toOptionsGrid
+            model.gridDims
+    maxDim =
+      model.gridDims
+        |> List.foldl
+          Basics.max
+          0
+    cellW =
+      (halfW - 10) / toFloat (maxDim + 1)
+    cellH =
+      model.gridDims
+        |> List.foldl (+) 0
+        -- Label cells
+        |> toFloat
+        |> (+)
+          ( (toFloat
+            ( List.length
+              model.gridDims
+            )
+            )
+          )
+        |> \cellHigh -> h / cellHigh
   in
   [ logicGridConstraintsView
+    model.yLabels
     (left+halfW)
     top
     halfW
     h
-    ( toOptionsGrid 3 model.grid0
-      ++ toOptionsGrid 3 model.grid1
-    )
+    options
     model.constraints
-  , logicGridGridView
+  , logicGridGridsView
+    model.xLabels
+    model.yLabels
     left
     top
-    (halfW - 10)
-    (halfH - 10)
-    3
-    3
-    ["1", "2", "3"]
-    ["A", "B", "C"]
-  , logicGridGridView
+    cellW
+    cellH
+    model.gridDims
+  , logicGridsContentsView
+    (left + cellW)
+    (top + cellH)
+    cellW --(halfW - 10 - cellW)
+    cellH --(halfH - 10 - cellH)
+    model.gridDims
+    model.grid
+  , logicGridHighlightView
     left
-    (top + halfH)
-    (halfW - 10)
-    (halfH - 10)
-    3
-    3
-    ["1", "2", "3"]
-    ["X", "Y", "Z"]
-  , logicGridContentsView
-      (left + cellW)
-      (top + cellH)
-      (halfW - 10 - cellW)
-      (halfH - 10 - cellH)
-      3
-      model.grid0
-  , logicGridContentsView
-      (left + cellW)
-      (top + (h/2) + cellH)
-      (halfW - 10 - cellW)
-      (halfH - 10 - cellH)
-      3
-      model.grid1
-  , logicGridHighlightView left top w h model.highlight
+    top
+    cellW
+    cellH
+    model.gridDims
+    model.highlight
   ]
     |> g []
 
 
-logicGridConstraintsView left top w h options constraints =
+logicGridConstraintsView labels left top w h options constraints =
   let
     rowH =
       h
@@ -655,29 +701,52 @@ logicGridConstraintsView left top w h options constraints =
           w
           rowH
           ( toStringGridConstraint
+            labels
             constraint
           )
       )
     |> g []
 
 
-logicGridContentsView left top w h cols grid =
+logicGridsContentsView left top cellW cellH gridDims grid =
+  gridDims
+    |> List.foldl
+      (\dim (startI, t, svgs) ->
+        ( startI + (dim * dim)
+        , t + (toFloat (dim + 1) * cellH)
+        , logicGridContentsView
+          left
+          t
+          cellW
+          cellH
+          startI
+          dim
+          grid
+          :: svgs
+        )
+      )
+      (0, top, [])
+    |> (\(_, _, svgs) -> svgs)
+    |> g []
+
+
+logicGridContentsView left top cellW cellH startI dim grid =
   let
     len = Array.length grid
-    rows = len // cols
-    cellW = w / toFloat cols
-    cellH = h / toFloat rows
     cellInnerW = cellW * 0.6
     cellInnerH = cellH * 0.6
     cellInnerX = cellW * 0.2
     cellInnerY = cellH * 0.2
   in
   grid
-    |> Array.foldl
+    |> Array.toList
+    |> List.drop startI
+    |> List.take (dim * dim)
+    |> List.foldl
       (\maybeTruth ((prevX, prevY), svgs) ->
         let
           (thisX, thisY) =
-            if prevX + 1 >= cols then
+            if prevX + 1 >= dim then
               (0, prevY + 1)
             else
               (prevX + 1, prevY)
@@ -726,69 +795,67 @@ logicGridContentsView left top w h cols grid =
     |> g []
 
 
-logicGridHighlightView left top w h highlight =
+logicGridHighlightView : Float -> Float -> Float -> Float -> List Int -> Highlight -> Svg.Svg LogicGridMsg
+logicGridHighlightView left top cellW cellH gridDims highlight =
   let
-    cellW = (w - 20) / 8
-    cellH = (h - 20) / 8
     cellInnerX = cellW * 0.3
     cellInnerY = cellH * 0.3
     textW =
       cellW - cellInnerX - cellInnerX
     textH =
       cellH - cellInnerY - cellInnerY
-    gridPoint gridI =
-      if gridI == 0 then
-        ( left + cellW
-        , top + cellH
-        )
-      else
-        ( left + cellW
-        , top + (h/2) + cellH
-        )
+    gridLeft = left + cellW
+    getGridTop gridI =
+      gridDims
+        |> List.take gridI
+        |> List.foldl (+) 0
+        |> (+) gridI
+        |> (+) 1
+        |> toFloat
+        |> (*) cellH
   in
   case highlight of
     NoHighlight ->
-      [ viewCircle
-        "white"
-        black
-        2
-        (left + (cellW/2))
-        (top + (cellH/2))
-        ( Basics.min
-          textW
-          textH
-        )
-      , viewFillText
-        "gold"
-        (left + cellInnerX)
-        (top + cellInnerY)
-        textW
-        textH
-        "1"
-      , viewCircle
-        "white"
-        black
-        2
-        (left + (cellW/2))
-        (top + (h/2) + (cellH/2))
-        ( Basics.min
-          textW
-          textH
-        )
-      , viewFillText
-        "gold"
-        (left + cellInnerX)
-        (top + (h/2) + cellInnerY)
-        textW
-        textH
-        "2"
-      ]
+      gridDims
+        |> List.indexedMap Tuple.pair
+        |> List.foldl
+          (\(i, dim) ( t, svgs ) ->
+            ( t + (toFloat (dim + 1) * cellH)
+            , viewCircle
+                "white"
+                black
+                2
+                (left + (cellW/2))
+                (t + (cellH/2))
+                ( Basics.min
+                  textW
+                  textH
+                )
+              :: viewFillText
+                "gold"
+                (left + cellInnerX)
+                (t + cellInnerY)
+                textW
+                textH
+                ( String.fromInt
+                  ( i + 1 )
+                )
+              :: svgs
+            )
+          )
+          ( top, [] )
+        |> Tuple.second
         |> g []
     
     GridHighlight gridI ->
       let
-        (gridLeft, gridTop) =
-          gridPoint gridI
+        gridTop = getGridTop gridI
+        dim =
+          gridDims
+            |> List.drop gridI
+            |> List.head
+            |> Maybe.withDefault 1
+            |> toFloat
       in
       if gridI == 0 then
         viewRectLine
@@ -796,21 +863,26 @@ logicGridHighlightView left top w h highlight =
           2
           gridLeft
           gridTop
-          (cellW * 3)
-          (cellH * 3)
+          (cellW * dim)
+          (cellH * dim)
       else
         viewRectLine
           "yellow"
           2
           gridLeft
           gridTop
-          (cellW * 3)
-          (cellH * 3)
+          (cellW * dim)
+          (cellH * dim)
 
     ColHighlight gridI colI ->
       let
-        (gridLeft, gridTop) =
-          gridPoint gridI
+        gridTop = getGridTop gridI
+        dim =
+          gridDims
+            |> List.drop gridI
+            |> List.head
+            |> Maybe.withDefault 1
+            |> toFloat
       in
       viewRectLine
         "yellow"
@@ -818,12 +890,11 @@ logicGridHighlightView left top w h highlight =
         (gridLeft + (toFloat colI * cellW))
         gridTop
         cellW
-        (cellH * 3)
+        (cellH * dim)
 
     CellHighlight gridI colI rowI ->
       let
-        (gridLeft, gridTop) =
-          gridPoint gridI
+        gridTop = getGridTop gridI
       in
       viewRectLine
         "yellow"
@@ -834,10 +905,42 @@ logicGridHighlightView left top w h highlight =
         cellH
 
 
-logicGridGridView left top w h cols rows xLabels yLabels =
+logicGridGridsView : String -> String -> Float -> Float -> Float -> Float -> List Int -> Svg.Svg LogicGridMsg
+logicGridGridsView xLabels yLabels left top cellW cellH gridDims =
+  gridDims
+    |> List.foldl
+      (\dim ((t, xl, yl), svgs) ->
+        ( ( t + (toFloat (dim + 1) * cellH)
+          , String.dropLeft dim xl
+          , String.dropLeft dim yl
+          )
+        , logicGridGridView
+          left
+          t
+          cellW
+          cellH
+          dim
+          dim
+          ( xl
+            |> String.left dim
+            |> String.toList
+            |> List.map String.fromChar
+          )
+          ( yl
+            |> String.left dim
+            |> String.toList
+            |> List.map String.fromChar
+          )
+          :: svgs
+        )
+      )
+      ((top, xLabels, yLabels), [])
+    |> Tuple.second
+    |> g []
+
+
+logicGridGridView left top cellW cellH cols rows xLabels yLabels =
   let
-    cellW = w / (cols + 1)
-    cellH = h / (rows + 1)
     cellInnerW = cellW * 0.7
     cellInnerX = cellW * 0.15
     cellInnerH = cellH * 0.7
@@ -846,15 +949,13 @@ logicGridGridView left top w h cols rows xLabels yLabels =
   [ logicGridGridLinesView
     (left + cellW)
     (top + cellH)
-    (w - cellW)
-    (h - cellH)
+    cellW
+    cellH
     cols
     rows
   , logicGridYLabelView
     left
     top
-    w
-    h
     cellInnerW
     cellInnerH
     cellInnerX
@@ -864,8 +965,6 @@ logicGridGridView left top w h cols rows xLabels yLabels =
   , logicGridXLabelView
     left
     top
-    w
-    h
     cellInnerW
     cellInnerH
     cellInnerX
@@ -876,7 +975,7 @@ logicGridGridView left top w h cols rows xLabels yLabels =
     |> g []
 
 
-logicGridYLabelView left top w h cellInnerW cellInnerH cellInnerX cellInnerY cellH yLabels =
+logicGridYLabelView left top cellInnerW cellInnerH cellInnerX cellInnerY cellH yLabels =
   yLabels
     |> List.indexedMap
       (\i labelStr ->
@@ -894,7 +993,7 @@ logicGridYLabelView left top w h cellInnerW cellInnerH cellInnerX cellInnerY cel
     |> g []
 
 
-logicGridXLabelView left top w h cellInnerW cellInnerH cellInnerX cellInnerY cellW xLabels =
+logicGridXLabelView left top cellInnerW cellInnerH cellInnerX cellInnerY cellW xLabels =
   xLabels
     |> List.indexedMap
       (\i labelStr ->
@@ -912,12 +1011,12 @@ logicGridXLabelView left top w h cellInnerW cellInnerH cellInnerX cellInnerY cel
     |> g []
 
 
-logicGridGridLinesView left top w h cols rows =
+logicGridGridLinesView left top cellW cellH cols rows =
   let
-    cellW = w / cols
-    cellH = h / rows
+    w = cellW * toFloat cols
+    h = cellH * toFloat rows
   in
-  [ List.range 0 (round cols)
+  [ List.range 0 cols
     |> List.map toFloat
     |> List.map
       (\i ->
@@ -929,7 +1028,7 @@ logicGridGridLinesView left top w h cols rows =
           (top + h)
       )
     |> g []
-  , List.range 0 (round cols)
+  , List.range 0 cols
     |> List.map toFloat
     |> List.map
       (\i ->
@@ -976,13 +1075,14 @@ logicGridSubscriptions model =
 -- Functions
 
 
-toStringGridConstraint constraint =
+toStringGridConstraint labels constraint =
   case constraint of
     AllDiff exceptions indexSet ->
       "Diff{"
         ++ ( indexSet
             |> Set.toList
-            |> List.map gridIndex
+            |> List.map
+              (gridIndex labels)
             |> String.join ","
           )
         ++ "}"
@@ -994,54 +1094,83 @@ toStringGridConstraint constraint =
           )
 
     Fix atI value ->
-      gridIndex atI
+      gridIndex labels atI
         ++ " = "
         ++ String.fromInt (value + 1)
 
     Eq atI atJ offset ->
-      gridIndex atI
+      gridIndex labels atI
         ++ " = "
           ++ ( if offset /= 0 then
               "( "
-                ++ gridIndex atJ
+                ++ gridIndex labels atJ
                 ++ " + "
                 ++ String.fromInt offset
                 ++ " )"
             else
-              gridIndex atJ 
+              gridIndex labels atJ 
           )
 
 
-gridIndex atI =
-  "ABCXYZ"
+gridIndex labels atI =
+  labels
     |> String.toList
     |> List.map String.fromChar
     |> List.drop atI
     |> List.head
     |> Maybe.withDefault ""
 
-toOptionsGrid cols grid =
+toOptionsGrid gridDims grid =
+  let
+    firstCols =
+      gridDims
+        |> List.head
+        |> Maybe.withDefault 0
+  in
   grid
     |> Array.map (Maybe.withDefault True)
     |> Array.indexedMap Tuple.pair
     |> Array.toList
     |> List.foldr
-      (\(i, isOpPossible) (opsAtI, options)->
+      (\(i, isOpPossible) (opData, gridData)->
         let
+          (opsAtI, options) = opData
+          (dimsLeft, startI, cols) = gridData
           opsAtINext =
             if isOpPossible then
-              (modBy cols i) :: opsAtI
+              (modBy cols (i - startI)) :: opsAtI
             else
               opsAtI
         in
-        if modBy cols i == 0 then
-          ( []
-          , opsAtINext :: options
+        if modBy cols (i - startI) == 0 then
+          ( ( []
+            , opsAtINext :: options
+            )
+          , if
+              (i - startI) // cols
+                == (cols - 1)
+            then
+              ( List.drop 1 dimsLeft
+              , startI + (cols * cols)
+              , dimsLeft
+                |> List.head
+                |> Maybe.withDefault 0
+              )
+            else
+              ( dimsLeft, startI, cols )
           )
         else
-          ( opsAtINext, options )
+          ( (opsAtINext, options)
+          , gridData
+          )
       )
-      ([], [])
+      (([], [])
+      , ( List.drop 1 gridDims
+        , 0
+        , firstCols
+        )
+      )
+    |> Tuple.first
     --|> \(opsAtI, options) -> opsAtI :: options
     |> Tuple.second
 
