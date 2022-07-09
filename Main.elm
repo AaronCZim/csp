@@ -392,13 +392,35 @@ type Highlight
 
 type LogicGridMsg
   = KeyDown String
+  | SetConstraints (List Constraint)
 
 
-cmdLogicGridInit = Cmd.none
+cmdLogicGridInit = cmdLogicGridRandom
+
+
+cmdLogicGridRandom =
+  cmdRandomDoubleAllDiffCsp 3 3
+    |> Cmd.map
+      (\msg ->
+        case msg of
+          SetCsp answer constraints ->
+            SetConstraints
+              constraints
+
+          _ ->
+            KeyDown ""
+      )
 
 
 logicGridUpdate msg model =
   case msg of
+    SetConstraints constraints ->
+      ( { logicGridEmpty
+        | constraints = constraints
+        }
+      , Cmd.none
+      )
+
     KeyDown key ->
       case String.toInt key of
         Nothing ->
@@ -461,29 +483,55 @@ logicGridUpdate msg model =
 
 
 setCell gridI colI rowI toValue model =
-  if gridI == 0 then
-    ( { model
-      | highlight = NoHighlight
-      , grid0 =
-        gridSet
+  let
+    (grid0, grid1) =
+      if gridI == 0 then
+        ( gridSet
           colI
           rowI
           toValue
           model.grid0
-      }
-    , Cmd.none
-    )
-  else
-    ( { model
-      | highlight = NoHighlight
-      , grid1 =
-        gridSet
+        , model.grid1
+        )
+      else
+        ( model.grid0
+        , gridSet
           colI
           rowI
           toValue
           model.grid1
+        )
+  in
+    ( { model
+      | highlight = NoHighlight
+      , grid0 = grid0
+      , grid1 = grid1
       }
-    , Cmd.none
+    , if
+        ( grid0
+          |> Array.toList
+          |> List.all ((/=) Nothing)
+        )
+        && ( grid1
+            |> Array.toList
+            |> List.all ((/=) Nothing)
+          )
+      then
+        let
+          options =
+            toOptionsGrid 3 grid0
+              ++ toOptionsGrid 3 grid1
+        in
+        if
+          model.constraints
+            |> List.all
+              (isGuaranteed options)
+        then
+          cmdLogicGridRandom
+        else
+          Cmd.none
+      else
+        Cmd.none
     )
 
 
@@ -982,11 +1030,11 @@ toOptionsGrid cols grid =
         let
           opsAtINext =
             if isOpPossible then
-              (modBy 3 i) :: opsAtI
+              (modBy cols i) :: opsAtI
             else
               opsAtI
         in
-        if modBy 3 i == 0 then
+        if modBy cols i == 0 then
           ( []
           , opsAtINext :: options
           )
