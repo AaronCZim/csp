@@ -399,27 +399,185 @@ type Highlight
 type LogicGridMsg
   = KeyDown String
   | SetConstraints (List Constraint)
+  | SetPuzzle
+    ( (List Int)
+    , String
+    , String
+    )
+    (List Constraint)
 
 
-cmdLogicGridInit = cmdLogicGridRandom
+cmdLogicGridInit =
+  cmdLogicGridRandom
 
 
 cmdLogicGridRandom =
-  cmdRandomDoubleAllDiffCsp 3 3
-    |> Cmd.map
-      (\msg ->
-        case msg of
-          SetCsp answer constraints ->
-            SetConstraints
-              constraints
-
-          _ ->
-            KeyDown ""
+  Random.uniform
+    ( ([5], "12345", "ABCDE"), rand5 )
+    [ ( ( [3, 3, 3], "123123123", "ABCIJKXYZ"), rand333 )
+    , ( ( [4, 4], "12341234", "ABCDWXYZ"), rand44 )
+    ]
+    |> Random.andThen
+      (\( format, generator ) ->
+        generator
+          |> Random.map
+            (Tuple.pair format)
       )
+    |> Random.generate
+      (\(format, constraint) ->
+        SetPuzzle
+          format
+          constraint
+      )
+
+
+rand5 =
+  randShuffle [0,1,2,3,4] []
+    |> Random.andThen
+      (\answer ->
+        randPuzzle
+          [4,4,4,4,4]
+          answer
+          [ AllDiff 0 (Set.fromList [0,1,2,3,4]) ]
+      )
+
+
+rand44 =
+  randShuffle [0,1,2,3] []
+    |> Random.andThen
+      (\halfAnswer ->
+        randShuffle [0,1,2,3] []
+          |> Random.andThen
+            (\secondHalfAnswer ->
+              randPuzzle
+                [4,4,4,4,4,4,4,4]
+                ( halfAnswer
+                  ++ secondHalfAnswer
+                )
+                [ AllDiff 0
+                  (Set.fromList [0,1,2,3])
+                , AllDiff 0
+                  (Set.fromList [4,5,6,7])
+                ]
+            )
+      )
+
+
+rand333 =
+  randShuffle [0,1,2] []
+    |> Random.andThen
+      (\ans1 ->
+        randShuffle [0,1,2] []
+          |> Random.andThen
+            (\ans2 ->
+              randShuffle [0,1,2] []
+                |> Random.andThen
+                  (\ans3 ->
+                    randPuzzle
+                      [3,3,3,3,3,3,3,3,3]
+                      (ans1 ++ ans2 ++ ans3)
+                      [ AllDiff 0
+                        (Set.fromList [0,1,2])
+                      , AllDiff 0
+                        (Set.fromList [3,4,5])
+                      , AllDiff 0
+                        (Set.fromList [6,7,8])
+                      ]
+                )
+            )
+        )
+
+
+randPuzzle template answer partialConstraints =
+  let
+    allOptions =
+      templateToOptions
+        template
+    options =
+      prune
+        partialConstraints
+        allOptions
+    nonSingletonIs =
+      options
+        |> List.indexedMap Tuple.pair
+        |> List.filter
+          ( Tuple.second
+            >> List.drop 1
+            >> (/=) []
+          )
+        |> List.map Tuple.first
+  in
+  case List.head nonSingletonIs of
+    Nothing ->
+      Random.constant
+        partialConstraints
+        
+    Just nonSingletonI ->
+      Random.pair
+        ( Random.uniform
+          nonSingletonI
+          (List.drop 1 nonSingletonIs)
+        )
+        ( Random.int 0 1 )
+        |> Random.andThen
+          (\(i, t) ->
+            let
+              iValue =
+                answer
+                  |> List.drop i
+                  |> List.head
+                  |> Maybe.withDefault 0
+            in
+            if t == 0 then
+              ( Fix i iValue
+                :: partialConstraints
+              )
+                |> randPuzzle template answer
+            else
+              Random.int 0
+                (List.length answer - 2)
+                |> Random.andThen
+                  (\j ->
+                    let
+                      jValue =
+                        answer
+                          |> List.drop j
+                          |> List.head
+                          |> Maybe.withDefault 0
+                    in
+                    ( Eq i j (iValue - jValue)
+                      :: partialConstraints
+                    )
+                      |> randPuzzle template answer
+                  )
+          )
+        
 
 
 logicGridUpdate msg model =
   case msg of
+    SetPuzzle (dims, xL, yL) constraints ->
+      ( { logicGridEmpty
+        | constraints =
+          constraints
+            |> filterConstraints
+              ( gridDimsToTemplate
+                  dims
+              )
+        , gridDims = dims
+        , xLabels = xL
+        , yLabels = yL
+        , grid =
+          Array.repeat
+            ( dims
+              |> List.map (\d -> d * d)
+              |> List.foldl (+) 0
+            )
+            Nothing
+        }
+      , Cmd.none
+      )
+
     SetConstraints constraints ->
       ( { logicGridEmpty
         | constraints = constraints
@@ -536,11 +694,8 @@ setGrid gridI colI rowI toValue grid gridDims =
     startI =
       gridDims
         |> List.take gridI
-        |> List.foldl
-          (\d sum->
-            (d*d) + sum
-          )
-          0
+        |> List.map (\d -> d * d)
+        |> List.foldl (+) 0
   in
     setGridCell
       startI
@@ -554,7 +709,9 @@ setGrid gridI colI rowI toValue grid gridDims =
 
 setGridCell startI cols rows colI rowI toValue grid =
   if
-    Maybe.withDefault False toValue
+    Maybe.withDefault
+      False
+      toValue
       == True
   then
     grid
@@ -661,6 +818,16 @@ logicGridView left top w h model =
     cellH
     model.gridDims
     model.highlight
+  {-- , model.grid
+    |> toOptionsGrid model.gridDims
+    |> Debug.toString
+    |> viewFillText
+      black
+      left
+      top
+      w
+      h
+  --}
   ]
     |> g []
 
@@ -1075,6 +1242,12 @@ logicGridSubscriptions model =
 -- Functions
 
 
+gridDimsToTemplate gridDims =
+  gridDims
+    |> List.concatMap
+      (\dim -> List.repeat dim (dim - 1))
+
+
 toStringGridConstraint labels constraint =
   case constraint of
     AllDiff exceptions indexSet ->
@@ -1120,59 +1293,58 @@ gridIndex labels atI =
     |> List.head
     |> Maybe.withDefault ""
 
+
+toOptionsGrid : List Int -> Array.Array (Maybe Bool) -> List (List Int)
 toOptionsGrid gridDims grid =
-  let
-    firstCols =
-      gridDims
-        |> List.head
-        |> Maybe.withDefault 0
-  in
-  grid
-    |> Array.map (Maybe.withDefault True)
-    |> Array.indexedMap Tuple.pair
-    |> Array.toList
-    |> List.foldr
-      (\(i, isOpPossible) (opData, gridData)->
-        let
-          (opsAtI, options) = opData
-          (dimsLeft, startI, cols) = gridData
-          opsAtINext =
-            if isOpPossible then
-              (modBy cols (i - startI)) :: opsAtI
-            else
-              opsAtI
-        in
-        if modBy cols (i - startI) == 0 then
-          ( ( []
-            , opsAtINext :: options
-            )
-          , if
-              (i - startI) // cols
-                == (cols - 1)
-            then
-              ( List.drop 1 dimsLeft
-              , startI + (cols * cols)
-              , dimsLeft
-                |> List.head
-                |> Maybe.withDefault 0
-              )
-            else
-              ( dimsLeft, startI, cols )
-          )
-        else
-          ( (opsAtINext, options)
-          , gridData
-          )
-      )
-      (([], [])
-      , ( List.drop 1 gridDims
-        , 0
-        , firstCols
+  gridDims
+    |> List.foldl
+      (\cols (startI, options) ->
+        ( startI + ( cols * cols )
+        , options
+          ++ toOptionsGridSlice
+            startI
+            cols
+            grid
         )
       )
-    |> Tuple.first
-    --|> \(opsAtI, options) -> opsAtI :: options
+      (0, [])
     |> Tuple.second
+
+
+toOptionsGridSlice : Int -> Int -> Array.Array (Maybe Bool) -> List (List Int)
+toOptionsGridSlice startI cols grid =
+  List.range startI
+    (startI + (cols * cols) - 1)
+    |> List.foldr
+      (\i (optionsAtI, options) ->
+        let
+          indexIntoRow =
+            modBy cols (i - startI)
+          opsAtINext =
+            if
+              grid
+                |> Array.get
+                  i
+                |> Maybe.withDefault
+                  Nothing
+                |> (==) (Just False)
+            then
+              optionsAtI
+            else
+              indexIntoRow :: optionsAtI
+        in
+        if indexIntoRow == 0 then
+        -- To next row
+          ( [] 
+          , opsAtINext :: options
+          )
+        else
+          ( opsAtINext
+          , options
+          )
+      )
+      ([], [])
+  |> Tuple.second
 
 
 -- End of ./src/LogicGrid.elm
