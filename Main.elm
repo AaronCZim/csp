@@ -494,8 +494,8 @@ randPuzzle template answer partialConstraints =
     answer
     partialConstraints
     |> Random.andThen
-      (\maybeConstraint ->
-        case maybeConstraint of
+      (\constraintList ->
+        case List.head constraintList of
           Nothing ->
             Random.constant
               partialConstraints
@@ -504,12 +504,11 @@ randPuzzle template answer partialConstraints =
             randPuzzle
               template
               answer
-              ( constraint
-                :: partialConstraints
+              ( constraintList
+                ++ partialConstraints
               )
       )
 
-randPuzzleConstraint : List Int -> List Int -> List Constraint -> Random.Generator (Maybe Constraint)
 randPuzzleConstraint template answer partialConstraints =
   let
     allOptions =
@@ -528,20 +527,10 @@ randPuzzleConstraint template answer partialConstraints =
             >> (/=) []
           )
         |> List.map Tuple.first
-    mCToList maybeConstraint =
-      case maybeConstraint of
-        Nothing ->
-          []
-        Just constraint ->
-          case constraint of
-            Or constraints ->
-              constraints
-            _ ->
-              [ constraint ]
   in
   case List.head nonSingletonIs of
     Nothing ->
-      Random.constant Nothing
+      Random.constant []
         
     Just nonSingletonI ->
       Random.pair
@@ -549,7 +538,7 @@ randPuzzleConstraint template answer partialConstraints =
           nonSingletonI
           (List.drop 1 nonSingletonIs)
         )
-        ( Random.int 0 2 )
+        ( Random.int 0 3 )
         |> Random.andThen
           (\(i, t) ->
             let
@@ -561,14 +550,19 @@ randPuzzleConstraint template answer partialConstraints =
             in
             if t == 0 then
               Fix i iValue
-                |> Just
+                |> List.singleton
                 |> Random.constant
             else if t == 1 then
               Random.int 0
                 (List.length answer - 2)
-                |> Random.andThen
-                  (\j ->
+                |> Random.map
+                  (\randJ ->
                     let
+                      j =
+                        if randJ >= i then
+                          randJ + 1
+                        else
+                          randJ
                       jValue =
                         answer
                           |> List.drop j
@@ -576,10 +570,10 @@ randPuzzleConstraint template answer partialConstraints =
                           |> Maybe.withDefault 0
                     in
                     Eq i j (iValue - jValue)
-                      |> Just
-                      |> Random.constant
+                      |> List.singleton
                   )
-            else
+            else if t == 2 then
+              -- Red Herring "Or"
               let
                 correct =
                   randPuzzleConstraint
@@ -588,19 +582,58 @@ randPuzzleConstraint template answer partialConstraints =
                     partialConstraints
                 other =
                   randSimpleConstraint template
-                    |> Random.map Just
+                    |> Random.map
+                      List.singleton
               in
               Random.pair
                 correct
                 other
-                |> Random.andThen
+                |> Random.map
                   (\(cCorrect, cOther) ->
-                    ( mCToList cCorrect
-                      ++ mCToList cOther
-                    )
+                    ( cCorrect ++ cOther )
                       |> Or
-                      |> Just
-                      |> Random.constant
+                      |> List.singleton
+                  )
+            else
+              Random.int 0
+                (List.length answer - 2)
+                |> Random.map
+                  (\randJ ->
+                    let
+                      j =
+                        if randJ >= i then
+                          randJ + 1
+                        else
+                          randJ
+                      jMax =
+                        template
+                          |> List.drop j
+                          |> List.head
+                          |> Maybe.withDefault 0
+                    in
+                    jMax
+                      |> (+) 2
+                      |> List.range 0 
+                      |> List.filter ((/=) i)
+                      |> List.filter ((/=) j)
+                      |> List.take jMax
+                      |> List.indexedMap
+                        (\k notIOrJ ->
+                          let
+                            notIOrJIndexValue =
+                              answer
+                                |> List.drop i
+                                |> List.head
+                                |> Maybe.withDefault 0
+                          in
+                          Or
+                            [ Bar j k
+                            , Eq i notIOrJ
+                              ( iValue
+                                - notIOrJIndexValue
+                              )
+                            ]
+                        )
                   )
           )
         
@@ -890,48 +923,50 @@ logicGridConstraintsView labels left top w h options constraints =
       h
         / toFloat
           ( List.length
-            constraints
+            constraintLines
+          )
+    constraintLines =
+      constraints
+        |> List.concatMap
+          (\constraintI ->
+            case constraintI of
+              Or orConstraints ->
+                case List.head orConstraints of
+                  Nothing ->
+                    []
+
+                  Just head ->
+                    ( constraintI
+                    , head
+                    , toStringGridConstraint
+                      labels
+                      head
+                    )
+                      :: ( orConstraints
+                          |> List.drop 1
+                          |> List.map
+                            (\orConstraint ->
+                              ( constraintI
+                              , orConstraint
+                              , "| "
+                                ++ toStringGridConstraint
+                                  labels
+                                  orConstraint
+                              )
+                            )
+                      )
+
+              _ ->
+                [ ( constraintI
+                  , constraintI
+                  , toStringGridConstraint
+                    labels
+                    constraintI
+                  )
+                ]
           )
   in
-  constraints
-    |> List.concatMap
-      (\constraintI ->
-        case constraintI of
-          Or orConstraints ->
-            case List.head orConstraints of
-              Nothing ->
-                []
-
-              Just head ->
-                ( constraintI
-                , head
-                , toStringGridConstraint
-                  labels
-                  head
-                )
-                  :: ( orConstraints
-                      |> List.drop 1
-                      |> List.map
-                        (\orConstraint ->
-                          ( constraintI
-                          , orConstraint
-                          , "| "
-                            ++ toStringGridConstraint
-                              labels
-                              orConstraint
-                          )
-                        )
-                  )
-
-          _ ->
-            [ ( constraintI
-              , constraintI
-              , toStringGridConstraint
-                labels
-                constraintI
-              )
-            ]
-      )
+  constraintLines
     |> List.indexedMap
       (\i (constraint, constraintInner, constraintStr) ->
         let
@@ -1358,6 +1393,11 @@ toStringGridConstraint labels constraint =
         ++ " = "
         ++ String.fromInt (value + 1)
 
+    Bar atI value ->
+      gridIndex labels atI
+        ++ " != "
+        ++ String.fromInt (value + 1)
+
     Eq atI atJ offset ->
       gridIndex labels atI
         ++ " = "
@@ -1488,6 +1528,7 @@ cspEmpty =
 
 type Constraint
   = Fix Int Int
+  | Bar Int Int
   | Eq Int Int Int
   | AllDiff Int (Set.Set Int)
   | Or (List Constraint)
@@ -1626,7 +1667,7 @@ randSimpleConstraint template =
             template
               |> List.drop index
               |> List.head
-              |> Maybe.withDefault 0
+              |> Maybe.withDefault 1
               |> Random.int 0
           iValueGenerator =
             valueGenerator i
@@ -2034,6 +2075,12 @@ toStringConstraint constraint =
         ++ " == "
         ++ String.fromInt value
 
+    Bar atI value ->
+      "at"
+        ++ String.fromInt atI
+        ++ " != "
+        ++ String.fromInt value
+
     Eq atI atJ offset ->
       "at"
         ++ String.fromInt atI
@@ -2119,6 +2166,9 @@ isConstrained guess constraint =
     Fix i value ->
       get i == value
     
+    Bar i value ->
+      get i /= value
+    
     Eq i j offset ->
       get i == (get j + offset)
     
@@ -2178,6 +2228,10 @@ isPossible options constraint =
       Fix i value ->
         at i
           |> List.any ((==) value)
+
+      Bar i value ->
+        at i
+          |> List.any ((/=) value)
 
       Eq i j offset ->
         let
@@ -2254,6 +2308,10 @@ isGuaranteed options constraint =
 
       Fix i value ->
         at i == [value]
+
+      Bar i value ->
+        at i
+          |> List.all ((/=) value)
 
       Eq i j offset ->
         let
@@ -2393,6 +2451,23 @@ pruneConstraint constraint options =
       ( List.take i options )
         ++ ( List.filter
             ((==) value)
+            optionsAtI
+            :: List.drop
+              (i + 1)
+               options
+          )
+
+    Bar i value ->
+      let
+        optionsAtI =
+          options
+            |> List.drop i
+            |> List.head
+            |> Maybe.withDefault []
+      in
+      ( List.take i options )
+        ++ ( List.filter
+            ((/=) value)
             optionsAtI
             :: List.drop
               (i + 1)
@@ -2546,10 +2621,50 @@ filterConstraints template constraints =
             if optionsNext == options then
               ( fc, options )
             else
-              ( constraintsNext, optionsNext )
+              case constraint of
+                Or orConstraints ->
+                  let
+                    or = filterOrConstraints
+                      options
+                      fc
+                      orConstraints
+                  in
+                  ( or :: fc
+                  , prune
+                      (or :: fc)
+                      options
+                  )
+                _ ->
+                  ( constraintsNext, optionsNext )
       )
       ( [], allOptions )
     |> Tuple.first
+
+
+filterOrConstraints options constraints orConstraints =
+  orConstraints
+    |> List.foldl
+      (\orConstraint (optionsList, fOrConstraint) ->
+        let
+          optionsNext =
+            prune
+              (orConstraint :: constraints)
+              options
+        in
+        if
+          optionsList
+            |> List.any
+              ((==) optionsNext)
+        then
+          ( optionsList, fOrConstraint )
+        else
+          ( optionsNext :: optionsList
+          , orConstraint :: fOrConstraint
+          )
+      )
+      ([], [])
+    |> Tuple.second
+    |> Or
 
 
 -- End of ./src/Csp.elm
